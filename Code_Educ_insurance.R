@@ -192,3 +192,67 @@ summary_table <- filtered_data %>%
 
 print(summary_table)
 
+#PSM analysis
+
+psm_input <- filtered_data_cali_languages %>%
+  mutate(
+    native_binary = ifelse(speakeng_label %in% c("Yes, speaks English very well", "Yes, speaks English well", "Yes, speaks English"), 0, 1)
+  ) %>%
+  select(native_binary, race_label, age, educ, sex, citizen, empstat, inctot, poverty, hcovany_binary) %>%
+  drop_na()  # remove any missing values
+
+ps_model <- glm(
+  native_binary ~ race_label + age + educ + sex + citizen + empstat + inctot,
+  data = psm_input,
+  family = binomial
+)
+
+psm_input$pscore <- predict(ps_model, type = "response")
+
+psm_input <- psm_input %>%
+  mutate(weight = ifelse(native_binary == 1,
+                         1 / pscore,
+                         1 / (1 - pscore)))
+
+
+insurance_model <- glm(
+  hcovany_binary ~ native_binary,
+  data = psm_input,
+  weights = weight,
+  family = binomial
+)
+
+summary(insurance_model)
+
+psm_input$predicted_prob <- predict(insurance_model, type = "response")
+
+
+pred_summary <- psm_input %>%
+  group_by(native_binary) %>%
+  summarise(
+    mean_prob = mean(predicted_prob),
+    se = sd(predicted_prob) / sqrt(n()),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    label = ifelse(native_binary == 0, "English Proficient", "Limited English Proficient")
+  )
+
+
+
+ggplot(pred_summary, aes(x = label, y = mean_prob, fill = label)) +
+  geom_col(width = 0.6, color = "black") +
+  geom_errorbar(
+    aes(ymin = mean_prob - 1.96 * se, ymax = mean_prob + 1.96 * se),
+    width = 0.2,
+    color = "black"
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Predicted Probability of Being Insured",
+    x = NULL,
+    y = "Predicted Probability (with 95% CI)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none")
+
